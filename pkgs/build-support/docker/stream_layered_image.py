@@ -33,6 +33,7 @@ function does all this.
 
 import io
 import os
+import re
 import sys
 import json
 import hashlib
@@ -128,6 +129,47 @@ class ExtractChecksum:
 
 # Some metadata for a layer
 LayerInfo = namedtuple("LayerInfo", ["size", "checksum", "path", "paths"])
+
+
+def add_base_layers(tar, base_layers, mtime):
+    """
+    Adds the layers from the given base image. The structure of this layer
+    corresponds to an untar'ed image, with 'manifest.json' as the entry point.
+
+    tar: 'tarfile.TarFile' object for the new layer to be added to.
+    customisation_layer: Path containing the layer archive.
+    mtime: 'mtime' of the added layer tarball.
+    """
+    manifest_json_path = os.path.join(base_layers, "manifest.json")
+    try:
+        with open(manifest_json_path) as f:
+            manifest_json = json.load(f)
+    except FileNotFoundError:
+        print("No base layers provided", file=sys.stderr)
+        return []
+
+    config_path = os.path.join(base_layers, manifest_json[0]["Config"])
+    with open(config_path) as f:
+        config = json.load(f)
+
+    layers = manifest_json[0]["Layers"]
+    checksums = config["rootfs"]["diff_ids"]
+
+    for num, (layer, checksum) in enumerate(zip(layers, checksums), start=1):
+        layer_path = os.path.join(base_layers, layer)
+        checksum = re.sub(r"^sha256:", "", checksum)
+
+        path = f"{checksum}/layer.tar"
+        tarinfo = tar.gettarinfo(layer_path)
+        tarinfo.name = path
+        tarinfo.mtime = mtime
+
+        with open(layer_path, "rb") as f:
+            tar.addfile(tarinfo, f)
+
+        paths = [os.path.join(base_layers, checksum)]
+        print("Adding base layer", num, "from", paths, file=sys.stderr)
+        yield LayerInfo(size=None, checksum=checksum, path=path, paths=paths)
 
 
 def add_layer_dir(tar, paths, mtime):
@@ -248,15 +290,17 @@ def main():
 
     with tarfile.open(mode="w|", fileobj=sys.stdout.buffer) as tar:
         layers = []
-        for num, store_layer in enumerate(conf["store_layers"]):
-            print(
-              "Creating layer", num,
-              "from paths:", store_layer,
-              file=sys.stderr)
+        layers.extend(add_base_layers(tar, conf["base_layers"], mtime=mtime))
+
+        start = len(layers) + 1
+        for num, store_layer in enumerate(conf["store_layers"], start=start):
+            print("Creating layer", num, "from paths:", store_layer,
+                  file=sys.stderr)
             info = add_layer_dir(tar, store_layer, mtime=mtime)
             layers.append(info)
 
-        print("Creating the customisation layer...", file=sys.stderr)
+        print("Creating layer", len(layers) + 1, "with customisation...",
+              file=sys.stderr)
         layers.append(
           add_customisation_layer(
             tar,

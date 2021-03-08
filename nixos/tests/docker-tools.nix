@@ -161,10 +161,16 @@ import ./make-test-python.nix ({ pkgs, ... }: {
             "docker run --rm ${examples.layered-image.imageName} cat extraCommands",
         )
 
-    with subtest("Ensure building an image on top of a layered Docker images work"):
+    with subtest("Ensure images built on top of layered Docker images work"):
         docker.succeed(
             "docker load --input='${examples.layered-on-top}'",
             "docker run --rm ${examples.layered-on-top.imageName}",
+        )
+
+    with subtest("Ensure layered images built on top of layered Docker images work"):
+        docker.succeed(
+            "docker load --input='${examples.layered-on-top-layered}'",
+            "docker run --rm ${examples.layered-on-top-layered.imageName}",
         )
 
 
